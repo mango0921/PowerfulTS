@@ -16,6 +16,7 @@ from datetime import datetime
 from sqlalchemy import delete, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import get_settings
 from ..models import Account, BotOwnership, Session, VoiceBot
 from .tsmusic_client import TSMusicClient
 from .ts_nickname import ts_nickname_error
@@ -31,6 +32,8 @@ RELEASE_GRACE_SECONDS = 20.0
 # 等 bot 连上 TS 的上限。
 CONNECT_TIMEOUT_SECONDS = 25.0
 _CONNECT_POLL_SECONDS = 0.5
+# 网页通话 bot 使用的 TS 语音端口（不是 ServerQuery 端口）。
+DEFAULT_VOICE_PORT = 9987
 MAX_ACTIVE_GUEST_VOICE_BOTS = 10
 
 
@@ -45,29 +48,79 @@ class _BotTarget:
     server_password: str = field(default="", repr=False)
 
 
-async def _resolve_server_target(tsmusic: TSMusicClient, db: AsyncSession) -> _BotTarget:
-    """通话 bot 连哪个 TS 服务器：照抄一个已有 bot 的配置。
+def _target_from_config(config: dict) -> _BotTarget | None:
+    """从一条 bot 配置里取出可用的 TS 连接参数。"""
+    address = str(config.get("serverAddress") or "").strip()
+    if not address:
+        return None
+    try:
+        port = int(config.get("serverPort") or DEFAULT_VOICE_PORT)
+    except (TypeError, ValueError):
+        port = DEFAULT_VOICE_PORT
+    # The pinned fork exposes serverPassword in its internal config API.
+    # Keep it byte-for-byte (spaces can be part of a password), and never
+    # include it in logs, the target repr, or the public voice response.
+    password = config.get("serverPassword", "")
+    if not isinstance(password, str):
+        raise VoiceBotError("无法读取参照机器人的服务器密码，请检查 TSMusicBot 配置接口")
+    return _BotTarget(address, port, password)
 
-    不用 settings.ts3_host：那是给 PowerfulTS 自己的 ServerQuery 用的（常是 127.0.0.1），
-    而 bot 跑在 TSMusicBot 容器里，得用容器视角的地址（通常 host.docker.internal）。
-    已有 bot 的配置就是现成的正确答案。
+
+def _fallback_settings_target() -> _BotTarget | None:
+    """没有任何机器人时的代码级兜底：用系统设置的 TS 主机 + 语音端口。
+
+    只接受非回环地址：``127.0.0.1`` 是 PowerfulTS 自己查 ServerQuery 用的，
+    对 bot 来说指向它自己，连不通。
+    """
+    host = (get_settings().ts3_host or "").strip()
+    if not host:
+        return None
+    if host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}:
+        return None
+    return _BotTarget(host, DEFAULT_VOICE_PORT, "")
+
+
+async def _resolve_server_target(tsmusic: TSMusicClient, db: AsyncSession) -> _BotTarget:
+    """通话 bot 连哪个 TS 服务器：优先照抄已有机器人，其次系统设置。
+
+    参照顺序：
+    1. 本账号/任意归属记录里还存在且配置完整的机器人；
+    2. TSMusicBot 里任意一个机器人（含通话分身）；
+    3. 系统设置的 TS 主机（``TS3_HOST``）+ 9987，代码级兜底。
+
+    这样即使机器人被全部删掉，网页通话仍然可用。
     """
     rows = await db.execute(select(BotOwnership.bot_id))
     for (bot_id,) in rows.all():
-        config = await tsmusic.get_bot_config(bot_id)
-        address = str(config.get("serverAddress") or "").strip()
-        if address:
-            try:
-                port = int(config.get("serverPort") or 9987)
-            except (TypeError, ValueError):
-                port = 9987
-            # The pinned fork exposes serverPassword in its internal config API.
-            # Keep it byte-for-byte (spaces can be part of a password), and never
-            # include it in logs, the target repr, or the public voice response.
-            password = config.get("serverPassword", "")
-            if not isinstance(password, str):
-                raise VoiceBotError("无法读取参照机器人的服务器密码，请检查 TSMusicBot 配置接口")
-            return _BotTarget(address, port, password)
+        try:
+            config = await tsmusic.get_bot_config(bot_id)
+        except Exception:
+            # 归属记录指向已删除的机器人：跳过，继续找下一个参照。
+            continue
+        target = _target_from_config(config)
+        if target is not None:
+            return target
+
+    try:
+        bots = await tsmusic.list_all_bots()
+    except Exception:
+        bots = []
+    for bot in bots:
+        bot_id = str(bot.get("id") or "")
+        if not bot_id:
+            continue
+        try:
+            config = await tsmusic.get_bot_config(bot_id)
+        except Exception:
+            continue
+        target = _target_from_config(config)
+        if target is not None:
+            return target
+
+    target = _fallback_settings_target()
+    if target is not None:
+        logger.warning("没有可参照的机器人，通话使用系统 TS 主机 %s:%s", target.server_address, target.server_port)
+        return target
     raise VoiceBotError("还没有任何机器人配置可参照，请先在「音乐控制」里创建一个机器人")
 
 
@@ -360,7 +413,7 @@ class VoiceBotManager:
     ) -> str:
         recorded = await self.current_bot_id(db, account.id)
         try:
-            upstream_ids = {b.get("id") for b in await tsmusic.list_bots_checked()}
+            upstream_ids = {b.get("id") for b in await tsmusic.list_all_bots_checked()}
         except Exception as exc:
             raise VoiceBotError("无法读取通话机器人列表，请稍后重试") from exc
         if recorded and recorded in upstream_ids:
@@ -418,10 +471,11 @@ class VoiceBotManager:
 
     @staticmethod
     async def _is_connected(tsmusic: TSMusicClient, bot_id: str) -> bool:
-        for bot in await tsmusic.list_bots():
-            if bot.get("id") == bot_id:
-                if bot.get("status") != "connected":
-                    return False
-                client_id = await tsmusic.get_bot_client_id(bot_id)
-                return isinstance(client_id, int) and client_id > 0
-        return False
+        status = await tsmusic.get_bot_status(bot_id)
+        if status is None or status.get("id") != bot_id:
+            return False
+        if status.get("status") != "connected":
+            return False
+        client_id = await tsmusic.get_bot_client_id(bot_id)
+        return isinstance(client_id, int) and client_id > 0
+

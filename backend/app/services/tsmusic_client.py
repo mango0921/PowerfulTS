@@ -816,15 +816,45 @@ class TSMusicClient:
 
     async def list_bots(self) -> list[dict]:
         """GET /api/bot → 归一化为 BotInfo 列表。"""
+        return await self._list_bots("/api/bot")
+
+    async def list_all_bots(self) -> list[dict]:
+        """包含网页通话分身在内的全部 bot（只读参照用，不用于音乐后台）。"""
+        return await self._list_bots("/api/bot?purpose=all")
+
+    async def _list_bots(self, path: str) -> list[dict]:
         await self._ensure_login()
         try:
-            resp = await self._request("GET", "/api/bot")
+            resp = await self._request("GET", path)
             data = resp.json()
             raw = data.get("bots", data.get("data", {}).get("bots", []))
             return [self._map_bot(b) for b in raw if isinstance(b, dict)]
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning("TSMusicBot list_bots 失败: %s", exc)
             return []
+
+    async def get_bot_status(self, bot_id: str) -> dict | None:
+        """GET /api/bot/:id → 单个 bot 的状态（不受 purpose 过滤影响）。"""
+        await self._ensure_login()
+        try:
+            resp = await self._request("GET", f"/api/bot/{bot_id}")
+            data = resp.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        return self._map_bot(data)
+
+    async def list_all_bots_checked(self) -> list[dict]:
+        """同 list_bots_checked，但包含通话分身。"""
+        await self._ensure_login()
+        resp = await self._request("GET", "/api/bot?purpose=all")
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError("TSMusicBot bot list response is not an object")
+        raw = data.get("bots", data.get("data", {}).get("bots", []))
+        return [self._map_bot(b) for b in raw if isinstance(b, dict)]
 
     async def list_bots_checked(self) -> list[dict]:
         """严格读取 bot 列表，供后台任务区分“确实为空”和“查询失败”。
