@@ -379,6 +379,8 @@ class VoiceBotManager:
             created = await tsmusic.create_bot({
                 "name": account.ts_nickname,
                 "nickname": account.ts_nickname,
+                # 通话分身：后台不可见、不响应聊天指令
+                "purpose": "voice",
                 "serverAddress": target.server_address,
                 "serverPort": target.server_port,
                 "defaultChannel": "",
