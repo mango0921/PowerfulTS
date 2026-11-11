@@ -125,22 +125,64 @@ function formatTime(at: number) {
 const IMAGE_PATTERN = /\[img\]\s*(https?:\/\/[^\s[\]]+)\s*\[\/img\]|https?:\/\/[^\s[\]]+?\.(?:gif|png|jpe?g|webp)(?:\?[^\s[\]]*)?/gi
 
 interface MessagePart {
-  type: 'text' | 'image'
+  type: 'text' | 'image' | 'file'
   value: string
+  name?: string
+  size?: number
+}
+
+type TsFileEnvelope = {
+  msg_type?: string
+  body?: string
+  file_name?: string
+  file_size?: number
+}
+
+/** TS6 的文件消息以 JSON 文本下发（msg_type=ts.file.*），解析成附件卡片。 */
+function parseTsEnvelope(text: string): { kind: 'file'; name: string; size?: number } | { kind: 'text'; body: string } | null {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null
+  let payload: TsFileEnvelope
+  try {
+    payload = JSON.parse(trimmed) as TsFileEnvelope
+  } catch {
+    return null
+  }
+  if (typeof payload.msg_type === 'string' && payload.msg_type.startsWith('ts.file')) {
+    return {
+      kind: 'file',
+      name: payload.file_name || payload.body || '文件',
+      size: typeof payload.file_size === 'number' ? payload.file_size : undefined,
+    }
+  }
+  if (typeof payload.body === 'string') return { kind: 'text', body: payload.body }
+  return null
+}
+
+function formatSize(size?: number): string {
+  if (!size || size <= 0) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
 function messageParts(text: string): MessagePart[] {
+  const envelope = parseTsEnvelope(text)
+  if (envelope?.kind === 'file') {
+    return [{ type: 'file', value: envelope.name, name: envelope.name, size: envelope.size }]
+  }
+  const body = envelope?.kind === 'text' ? envelope.body : text
   const parts: MessagePart[] = []
   let last = 0
-  for (const match of text.matchAll(IMAGE_PATTERN)) {
+  for (const match of body.matchAll(IMAGE_PATTERN)) {
     const index = match.index ?? 0
-    if (index > last) parts.push({ type: 'text', value: text.slice(last, index) })
+    if (index > last) parts.push({ type: 'text', value: body.slice(last, index) })
     const url = match[1] || match[0]
     parts.push({ type: 'image', value: url })
     last = index + match[0].length
   }
-  if (last < text.length) parts.push({ type: 'text', value: text.slice(last) })
-  return parts.length ? parts : [{ type: 'text', value: text }]
+  if (last < body.length) parts.push({ type: 'text', value: body.slice(last) })
+  return parts.length ? parts : [{ type: 'text', value: body }]
 }
 
 function hideBrokenImage(event: Event) {
@@ -183,8 +225,13 @@ onBeforeUnmount(() => {
         <span v-if="message.private" class="chat-badge">私聊</span>
         <span class="chat-text">
           <template v-for="(part, index) in messageParts(message.text)" :key="index">
+            <span v-if="part.type === 'file'" class="chat-file">
+              <span class="chat-file-name">📎 {{ part.name }}</span>
+              <span v-if="part.size" class="chat-file-size">{{ formatSize(part.size) }}</span>
+              <span class="chat-file-hint">文件消息暂不支持预览</span>
+            </span>
             <img
-              v-if="part.type === 'image'"
+              v-else-if="part.type === 'image'"
               :src="part.value"
               class="chat-image"
               loading="lazy"
@@ -294,6 +341,20 @@ onBeforeUnmount(() => {
   text-decoration: underline;
   word-break: break-all;
 }
+.chat-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 3px 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  font-size: 0.95em;
+}
+.chat-file-name { color: var(--text-primary); }
+.chat-file-size { color: var(--text-muted); font-size: 0.85em; }
+.chat-file-hint { color: var(--text-muted); font-size: 0.8em; }
 .chat-input {
   display: flex;
   gap: 8px;
