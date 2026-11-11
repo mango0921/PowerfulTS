@@ -39,8 +39,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /** 以服务端分配的临时身份进入；Token 只授权监控与网页通话。 */
-  async function enterAsGuest() {
-    const session = await createGuestSession()
+  async function enterAsGuest(nickname?: string) {
+    const session = await createGuestSession(nickname)
     if (!session.success || !session.token || !session.ts_nickname) {
       throw new Error(session.error || '无法分配游客身份')
     }

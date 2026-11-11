@@ -33,6 +33,16 @@ class NicknameRequest(BaseModel):
     ts_nickname: str = Field(min_length=1, max_length=64)
 
 
+class GuestSessionRequest(BaseModel):
+    """游客自定义昵称；服务端统一追加 [游客] 后缀。"""
+
+    nickname: str | None = Field(default=None, max_length=26)
+
+
+# 游客昵称后缀：既表明临时身份，也避免与正式成员重名。
+GUEST_NICKNAME_SUFFIX = "[游客]"
+
+
 class VerifyCodeRequest(BaseModel):
     ts_nickname: str
     code: str
@@ -189,12 +199,29 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/guest")
-async def create_guest_session(request: Request, db: AsyncSession = Depends(get_db)):
-    """Issue a short-lived, voice-scoped session with a server-generated TS name."""
+async def create_guest_session(
+    request: Request,
+    body: GuestSessionRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Issue a short-lived, voice-scoped session.
+
+    可选 ``nickname``：游客自定义昵称，最终 TS 昵称统一加 ``[游客]`` 后缀，
+    避免与正式成员重名；留空则沿用随机分配的 ``游客-XXXXXX``。
+    """
     peer = request.client.host if request.client else "unknown"
     if not await request.app.state.guest_session_limiter.allow(peer):
         raise HTTPException(status_code=429, detail="游客身份申请过于频繁，请稍后再试")
-    account, token = await AuthService(db).create_guest_session()
+    custom = (body.nickname or "").strip() if body else ""
+    requested = f"{custom}{GUEST_NICKNAME_SUFFIX}" if custom else None
+    if requested:
+        nickname_error = ts_nickname_error(requested)
+        if nickname_error:
+            raise HTTPException(status_code=400, detail=nickname_error)
+    created = await AuthService(db).create_guest_session(requested)
+    if created is None:
+        raise HTTPException(status_code=409, detail="该昵称已被占用，换一个试试")
+    account, token = created
     return {
         "success": True,
         "token": token,

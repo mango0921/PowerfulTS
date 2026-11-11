@@ -90,14 +90,24 @@ class AuthService:
         await self.db.commit()
         return token
 
-    async def create_guest_session(self) -> tuple[Account, str]:
-        """Create a server-named, short-lived account for browser voice access."""
+    async def create_guest_session(
+        self, nickname: str | None = None
+    ) -> tuple[Account, str] | None:
+        """Create a short-lived guest account for browser voice access.
+
+        ``nickname`` 是已经校验并拼好后缀的完整 TS 昵称；为 None 时随机分配。
+        自定义昵称撞上已有账号时返回 None，由调用方提示换一个。
+        """
         now = _now()
         alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        for _attempt in range(5):
-            nickname = "游客-" + "".join(secrets.choice(alphabet) for _ in range(6))
+        candidates = (
+            [nickname]
+            if nickname
+            else ["游客-" + "".join(secrets.choice(alphabet) for _ in range(6)) for _ in range(5)]
+        )
+        for candidate in candidates:
             account = Account(
-                ts_nickname=nickname,
+                ts_nickname=candidate,
                 unique_identifier=f"guest:{secrets.token_urlsafe(24)}",
                 password_hash=None,
                 role="guest",
@@ -119,6 +129,8 @@ class AuthService:
                 return account, token
             except IntegrityError:
                 await self.db.rollback()
+                if nickname:
+                    return None
         raise RuntimeError("无法分配临时游客身份")
 
     async def get_active_session_expiry(self, account_id: int) -> datetime | None:

@@ -50,8 +50,9 @@ export async function login(tsNickname: string, password: string, ip: string = '
 }
 
 /** 分配一个短时、仅限网页通话的游客身份。昵称由后端生成，不能冒用成员。 */
-export async function createGuestSession(): Promise<GuestSessionResponse> {
-  const { data } = await apiClient.post('/auth/guest')
+export async function createGuestSession(nickname?: string): Promise<GuestSessionResponse> {
+  const body = nickname?.trim() ? { nickname: nickname.trim() } : {}
+  const { data } = await apiClient.post('/auth/guest', body)
   return data
 }
 

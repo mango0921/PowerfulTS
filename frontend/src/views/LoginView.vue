@@ -79,6 +79,8 @@ const inviteStatus = ref<'idle' | 'validating' | 'valid' | 'invalid'>(
 )
 const inviterNickname = ref('')
 const inviteError = ref('')
+// 游客自定义昵称；留空则由服务端随机分配，提交时统一追加 [游客] 后缀
+const guestNickname = ref('')
 
 // 登录表单
 const loginForm = ref({ tsNickname: '', password: '' })
@@ -471,9 +473,14 @@ onUnmounted(() => {
 /** 以服务端分配的临时身份进入，可浏览面板并使用网页通话。 */
 async function handleGuest() {
   if (loading.value) return
+  const nickname = guestNickname.value.trim()
+  if (nickname.length > 26) {
+    ElMessage.warning('昵称最多 26 个字符')
+    return
+  }
   loading.value = true
   try {
-    await auth.enterAsGuest()
+    await auth.enterAsGuest(nickname || undefined)
     clearStoredInvitation()
     inviteToken.value = ''
     inviteStatus.value = 'idle'
@@ -723,11 +730,23 @@ async function handleRegister() {
                 <span class="divider-text label-mono">或</span>
                 <span class="divider-line"></span>
               </div>
+              <div class="guest-nickname">
+                <el-input
+                  v-model="guestNickname"
+                  maxlength="26"
+                  clearable
+                  placeholder="游客昵称（选填，留空随机分配）"
+                  :disabled="loading"
+                  @keyup.enter="handleGuest"
+                >
+                  <template #append>[游客]</template>
+                </el-input>
+              </div>
               <button class="guest-btn" :disabled="loading" @click="handleGuest">
                 <el-icon class="guest-icon"><View /></el-icon>
                 <span>以游客身份浏览</span>
               </button>
-              <p class="guest-hint">可查看管理面板，并以临时身份使用网页通话</p>
+              <p class="guest-hint">可查看管理面板，并以临时身份使用网页通话；昵称会显示为「你的昵称[游客]」</p>
             </div>
           </div>
 
@@ -1356,6 +1375,21 @@ async function handleRegister() {
 /* ── 游客入口 ── */
 .guest-entry {
   margin-top: 30px;
+}
+
+.guest-nickname {
+  margin-bottom: 10px;
+}
+
+.guest-nickname :deep(.el-input__wrapper) {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.guest-nickname :deep(.el-input-group__append) {
+  padding: 0 10px;
+  font-size: 0.78em;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .divider-or {
