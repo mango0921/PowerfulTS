@@ -37,7 +37,10 @@ function onSessionChange() {
     <div class="voice-body">
       <div class="voice-column">
         <ChannelVoice @session-change="onSessionChange" />
-        <VoiceChatPanel />
+        <details class="optional-panel" open>
+          <summary>频道聊天 <span>和频道里的所有人文字聊天</span></summary>
+          <VoiceChatPanel />
+        </details>
         <details class="optional-panel">
           <summary>一起看 <span>同步播放视频</span></summary>
           <WatchRoomPanel v-if="pageActive" />

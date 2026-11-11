@@ -133,7 +133,6 @@ onBeforeUnmount(() => {
 <template>
   <section class="voice-chat panel-surface">
     <header class="chat-head">
-      <h3>频道聊天</h3>
       <span class="chat-status" :class="status">
         {{ status === 'live' ? '已连接' : status === 'connecting' ? '连接中…' : '未连接' }}
       </span>
@@ -161,7 +160,6 @@ onBeforeUnmount(() => {
       />
       <button type="submit" class="chat-send" :disabled="status !== 'live' || !draft.trim()">发送</button>
     </form>
-    <p v-if="hint" class="chat-hint">{{ hint }}</p>
   </section>
 </template>
 
@@ -170,19 +168,24 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px;
-  border-radius: 14px;
-  min-height: 260px;
+  /* 与「一起看」「入场音效」保持一致的面板样式 */
+  padding: 18px 20px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+  min-height: 180px;
   max-height: 420px;
 }
 .chat-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
 }
 .chat-head h3 {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 0.92em;
 }
 .chat-status {
   font-size: 0.72rem;
