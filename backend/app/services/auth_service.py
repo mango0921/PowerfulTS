@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.security import generate_token, hash_password, verify_password
-from ..models import Account, Session, VerifyCode
+from ..models import Account, Session, VerifyCode, VoiceBot
 
 logger = logging.getLogger(__name__)
 
@@ -90,21 +90,68 @@ class AuthService:
         await self.db.commit()
         return token
 
+    async def _guest_is_in_voice(self, account_id: int) -> bool:
+        """是否仍持有通话身份（voice_bots 行在通话期间存在）。"""
+        return (
+            await self.db.scalar(
+                select(VoiceBot.id).where(VoiceBot.account_id == account_id)
+            )
+        ) is not None
+
+    async def _reclaim_guest(self, account: Account) -> None:
+        """回收一个不在语音里的过期游客账号，释放它的昵称。"""
+        from ..models import Session as SessionModel
+
+        await self.db.execute(
+            delete(SessionModel).where(SessionModel.account_id == account.id)
+        )
+        await self.db.execute(delete(VoiceBot).where(VoiceBot.account_id == account.id))
+        await self.db.delete(account)
+        await self.db.commit()
+
+    async def _resolve_guest_nickname(self, nickname: str) -> str | None:
+        """同名游客占用时：在语音里就递增编号，不在语音里就回收复用。
+
+        ``mango[游客]`` → ``mango1[游客]`` → ``mango2[游客]`` …
+        """
+        suffix = "[游客]"
+        stem = nickname[: -len(suffix)] if nickname.endswith(suffix) else nickname
+        for index in range(0, 100):
+            candidate = f"{stem}{'' if index == 0 else index}{suffix}"
+            existing = await self.db.scalar(
+                select(Account).where(Account.ts_nickname == candidate)
+            )
+            if existing is None:
+                return candidate
+            # 正式成员的昵称不回收，直接跳到下一个编号
+            if existing.role != "guest":
+                continue
+            if await self._guest_is_in_voice(existing.id):
+                continue
+            await self._reclaim_guest(existing)
+            return candidate
+        return None
+
     async def create_guest_session(
         self, nickname: str | None = None
     ) -> tuple[Account, str] | None:
         """Create a short-lived guest account for browser voice access.
 
         ``nickname`` 是已经校验并拼好后缀的完整 TS 昵称；为 None 时随机分配。
-        自定义昵称撞上已有账号时返回 None，由调用方提示换一个。
+        自定义昵称按「在语音则编号、不在则回收」的规则解析，无法分配时返回 None。
         """
         now = _now()
         alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        candidates = (
-            [nickname]
-            if nickname
-            else ["游客-" + "".join(secrets.choice(alphabet) for _ in range(6)) for _ in range(5)]
-        )
+        if nickname:
+            resolved = await self._resolve_guest_nickname(nickname)
+            if resolved is None:
+                return None
+            candidates = [resolved]
+        else:
+            candidates = [
+                "游客-" + "".join(secrets.choice(alphabet) for _ in range(6))
+                for _ in range(5)
+            ]
         for candidate in candidates:
             account = Account(
                 ts_nickname=candidate,
