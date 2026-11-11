@@ -10,6 +10,7 @@ import logging
 import math
 import re
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
@@ -633,6 +634,32 @@ class TSMusicClient:
                 if not self._logged_in:
                     raise TSMusicUnavailable("TSMusicBot session renewal failed") from exc
                 self._http.cookies.update(self._login_cookies)
+
+    @asynccontextmanager
+    async def chat_connect(self, bot_id: str | None = None):
+        """Open the bot's web-chat bridge WebSocket (caller pumps both ways)."""
+        await self._ensure_login()
+        bid = self._bid(bot_id)
+        if not bid:
+            raise ValueError("bot id is required for chat")
+        parsed = urlsplit(self._base)
+        scheme = "wss" if parsed.scheme == "https" else "ws"
+        base_path = parsed.path.rstrip("/")
+        ws_url = urlunsplit(
+            (scheme, parsed.netloc, f"{base_path}/api/voice/chat/{bid}", "", "")
+        )
+        cookie_header = self._http.build_request("GET", "/").headers.get("Cookie", "")
+        if not cookie_header:
+            raise TSMusicUnavailable("TSMusicBot login did not yield a session cookie")
+        async with websocket_connect(
+            ws_url,
+            additional_headers={"Cookie": cookie_header},
+            open_timeout=10,
+            close_timeout=3,
+            ping_interval=20,
+            max_size=1024 * 1024,
+        ) as websocket:
+            yield websocket
 
     async def pause(self, bot_id: str | None = None) -> dict:
         await self._ensure_login()

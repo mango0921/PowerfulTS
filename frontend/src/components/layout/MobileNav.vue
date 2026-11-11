@@ -9,9 +9,9 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const items = computed(() => [
-  { path: '/', label: '监控', icon: Monitor, restricted: false },
+  { path: '/', label: '通话', icon: Microphone, restricted: false },
+  { path: '/monitor', label: '监控', icon: Monitor, restricted: false },
   { path: '/music', label: '音乐', icon: Headset, restricted: auth.isGuest },
-  { path: '/voice', label: '通话', icon: Microphone, restricted: false },
   { path: '/friends', label: '好友', icon: User, restricted: auth.isGuest },
   ...(auth.isAdmin ? [{ path: '/admin', label: '设置', icon: Setting, restricted: false }] : []),
 ])

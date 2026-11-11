@@ -14,19 +14,25 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     children: [
       {
+        // 网页通话是主页面，登录后默认落在这里
         path: '',
+        name: 'Voice',
+        component: () => import('@/views/VoiceCallView.vue'),
+      },
+      {
+        path: 'monitor',
         name: 'Dashboard',
         component: () => import('@/views/DashboardView.vue'),
+      },
+      {
+        // 兼容旧链接
+        path: 'voice',
+        redirect: '/',
       },
       {
         path: 'music',
         name: 'Music',
         component: () => import('@/views/MusicView.vue'),
-      },
-      {
-        path: 'voice',
-        name: 'Voice',
-        component: () => import('@/views/VoiceCallView.vue'),
       },
       {
         path: 'friends',
@@ -71,7 +77,7 @@ router.beforeEach((to, _from, next) => {
   }
   // 游客可查看面板并使用网页通话；音乐/好友/Steam/管理仍受限。
   if (isGuest && !['Login', 'Dashboard', 'Voice'].includes(String(to.name))) {
-    next({ name: 'Dashboard' })
+    next({ name: 'Voice' })
     return
   }
   next()

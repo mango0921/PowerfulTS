@@ -20,9 +20,9 @@ const appVersion = __APP_VERSION__
 
 // 当前激活的菜单项（与 menu-item index 对应）
 const activeIndex = computed(() => {
-  if (route.path === '/') return 'dashboard'
+  if (route.path === '/') return 'voice'
+  if (route.path === '/monitor') return 'dashboard'
   if (route.path === '/music') return 'music'
-  if (route.path === '/voice') return 'voice'
   if (route.path === '/friends') return 'friends'
   if (route.path === '/steam') return 'steam'
   if (route.path === '/admin') return 'admin'
@@ -35,9 +35,9 @@ function navigate(key: string) {
     router.push('/login')
     return
   }
-  if (key === 'dashboard') router.push('/')
+  if (key === 'dashboard') router.push('/monitor')
   else if (key === 'music') router.push('/music')
-  else if (key === 'voice') router.push('/voice')
+  else if (key === 'voice') router.push('/')
   else if (key === 'friends') router.push('/friends')
   else if (key === 'steam') router.push('/steam')
   else if (key === 'admin') router.push('/admin')
@@ -61,6 +61,12 @@ function navigate(key: string) {
 
     <!-- 导航 -->
     <el-menu :default-active="activeIndex" @select="navigate" class="nav-menu">
+      <el-menu-item index="voice">
+        <el-icon><Microphone /></el-icon>
+        <span>网页通话</span>
+        <span v-if="auth.isGuest" class="guest-voice-hint label-mono">临时身份</span>
+      </el-menu-item>
+
       <el-menu-item index="dashboard">
         <el-icon><Monitor /></el-icon>
         <span>服务器监控</span>
@@ -70,12 +76,6 @@ function navigate(key: string) {
         <el-icon><Headset /></el-icon>
         <span>音乐控制</span>
         <span v-if="auth.isGuest" class="lock-hint label-mono">登录后查看</span>
-      </el-menu-item>
-
-      <el-menu-item index="voice">
-        <el-icon><Microphone /></el-icon>
-        <span>网页通话</span>
-        <span v-if="auth.isGuest" class="guest-voice-hint label-mono">临时身份</span>
       </el-menu-item>
 
       <el-menu-item index="friends" :class="{ 'guest-locked': auth.isGuest }">

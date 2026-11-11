@@ -182,6 +182,9 @@ async def lifespan(app: FastAPI):
     app.state.entry_sound_capabilities = EntrySoundCapabilities(ttl_seconds=30)
     app.state.entry_sound_tasks = set()
     app.state.voice_downlink = VoiceDownlinkTickets()
+    # Chat bridge uses its own ticket pool: the voice downlink already holds the
+    # per-account lease of the shared pool.
+    app.state.voice_chat = VoiceDownlinkTickets()
     app.state.watch_tickets = VoiceDownlinkTickets()
     app.state.watch_rooms = WatchRooms()
     watch_cleanup_task = asyncio.create_task(app.state.watch_rooms.cleanup_loop())

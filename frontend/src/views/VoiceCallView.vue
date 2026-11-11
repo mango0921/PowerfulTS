@@ -5,6 +5,7 @@ import ChannelBrowser from '@/components/voice/ChannelBrowser.vue'
 import EntrySoundPanel from '@/components/voice/EntrySoundPanel.vue'
 import WatchRoomPanel from '@/components/voice/WatchRoomPanel.vue'
 import ChannelAdminPanel from '@/components/voice/ChannelAdminPanel.vue'
+import VoiceChatPanel from '@/components/voice/VoiceChatPanel.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -36,6 +37,7 @@ function onSessionChange() {
     <div class="voice-body">
       <div class="voice-column">
         <ChannelVoice @session-change="onSessionChange" />
+        <VoiceChatPanel />
         <details class="optional-panel">
           <summary>一起看 <span>同步播放视频</span></summary>
           <WatchRoomPanel v-if="pageActive" />

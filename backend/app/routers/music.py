@@ -596,6 +596,60 @@ async def start_voice_downlink(
     }
 
 
+@router.post("/voice/chat/start")
+async def start_voice_chat(
+    request: Request,
+    account: VoiceAccountDep,
+    db: AsyncSession = Depends(get_db),
+):
+    """Issue a one-use capability for the browser chat socket."""
+    bid = await _voice_bot_id(request, account, db)
+    ticket = await request.app.state.voice_chat.create(account.id, bid)
+    return {
+        "ok": True,
+        "sessionId": ticket.id,
+        "streamPath": f"/api/music/voice/chat/{ticket.id}/stream",
+        "expiresIn": 30,
+    }
+
+
+@router.websocket("/voice/chat/{ticket_id}/stream")
+async def stream_voice_chat(websocket: WebSocket, ticket_id: str):
+    """Relay TeamSpeak channel text between the browser and the user's voice bot."""
+    ticket = await websocket.app.state.voice_chat.claim(ticket_id)
+    if ticket is None:
+        await websocket.close(code=4404, reason="聊天订阅不存在或已过期")
+        return
+    await websocket.accept()
+    try:
+        async with websocket.app.state.tsmusic.chat_connect(ticket.bot_id) as upstream:
+            async def pump_upstream() -> None:
+                async for raw in upstream:
+                    if isinstance(raw, str):
+                        await websocket.send_text(raw)
+
+            async def pump_browser() -> None:
+                while True:
+                    await upstream.send(await websocket.receive_text())
+
+            tasks = {
+                asyncio.create_task(pump_upstream()),
+                asyncio.create_task(pump_browser()),
+            }
+            _done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.warning("聊天连接中断", exc_info=True)
+    finally:
+        await websocket.app.state.voice_chat.release(ticket)
+
+
 class VoiceChannelRequest(BaseModel):
     cid: int = Field(ge=1)
     password: str = Field(default="", max_length=128)
