@@ -121,6 +121,41 @@ function formatTime(at: number) {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
+/** 聊天里的图片：裸图片链接 + TeamSpeak 的 [img]…[/img] 两种写法。 */
+const IMAGE_PATTERN = /\[img\]\s*(https?:\/\/[^\s[\]]+)\s*\[\/img\]|https?:\/\/[^\s[\]]+?\.(?:gif|png|jpe?g|webp)(?:\?[^\s[\]]*)?/gi
+
+interface MessagePart {
+  type: 'text' | 'image'
+  value: string
+}
+
+function messageParts(text: string): MessagePart[] {
+  const parts: MessagePart[] = []
+  let last = 0
+  for (const match of text.matchAll(IMAGE_PATTERN)) {
+    const index = match.index ?? 0
+    if (index > last) parts.push({ type: 'text', value: text.slice(last, index) })
+    const url = match[1] || match[0]
+    parts.push({ type: 'image', value: url })
+    last = index + match[0].length
+  }
+  if (last < text.length) parts.push({ type: 'text', value: text.slice(last) })
+  return parts.length ? parts : [{ type: 'text', value: text }]
+}
+
+function hideBrokenImage(event: Event) {
+  const img = event.target as HTMLImageElement | null
+  if (!img) return
+  // 加载失败就退回成链接文本，避免留一个破图标。
+  const link = document.createElement('a')
+  link.href = img.src
+  link.textContent = img.src
+  link.target = '_blank'
+  link.rel = 'noopener noreferrer'
+  link.className = 'chat-image-fallback'
+  img.replaceWith(link)
+}
+
 onMounted(() => { void connect() })
 onBeforeUnmount(() => {
   disposed = true
@@ -146,7 +181,20 @@ onBeforeUnmount(() => {
         <span class="chat-time mono">{{ formatTime(message.at) }}</span>
         <span class="chat-name">{{ message.name }}</span>
         <span v-if="message.private" class="chat-badge">私聊</span>
-        <span class="chat-text">{{ message.text }}</span>
+        <span class="chat-text">
+          <template v-for="(part, index) in messageParts(message.text)" :key="index">
+            <img
+              v-if="part.type === 'image'"
+              :src="part.value"
+              class="chat-image"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+              alt="聊天图片"
+              @error="hideBrokenImage"
+            />
+            <template v-else>{{ part.value }}</template>
+          </template>
+        </span>
       </div>
     </div>
 
@@ -231,6 +279,21 @@ onBeforeUnmount(() => {
   flex: none;
 }
 .chat-text { color: var(--text-primary); }
+.chat-image {
+  display: block;
+  max-width: min(100%, 260px);
+  max-height: 200px;
+  margin: 4px 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  object-fit: contain;
+  background: var(--bg-elevated);
+}
+.chat-image-fallback {
+  color: #7dd3fc;
+  text-decoration: underline;
+  word-break: break-all;
+}
 .chat-input {
   display: flex;
   gap: 8px;
