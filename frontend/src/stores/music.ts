@@ -707,6 +707,48 @@ const channelName = ref('')
     }
   }
 
+  /**
+   * 轮询当前频道机器人：只有「频道或机器人集合」变化时才整体替换并重选，
+   * 否则只原地更新在线/播放字段，避免列表与选中态反复闪烁、自动切换。
+   */
+  async function syncChannelBots() {
+    try {
+      const res = await apiGetBots()
+      const raw = res as { channelRequired?: boolean; detail?: string; channelName?: string }
+      channelRequired.value = !!raw.channelRequired
+      channelDetail.value = String(raw.detail || '')
+      const nextName = String(raw.channelName || '')
+      const incoming = (res.bots || []) as unknown as Array<Record<string, unknown> & { id: string }>
+      const sameSet = incoming.map((b) => b.id).sort().join(',') === bots.value.map((b) => b.id).sort().join(',')
+      const channelChanged = nextName !== channelName.value
+      channelName.value = nextName
+      if (!sameSet || channelChanged) {
+        bots.value = incoming as never
+        if (!incoming.some((b) => b.id === activeBotId.value)) {
+          const next = (incoming.find((b) => b.default) || incoming[0]) as { id?: string } | undefined
+          if (next?.id) await setActiveBot(next.id)
+          else {
+            activeBotId.value = ''
+            nowplaying.value = null
+          }
+        }
+        return
+      }
+      const byId = new Map(bots.value.map((b) => [b.id, b as unknown as Record<string, unknown>]))
+      for (const nb of incoming) {
+        const cur = byId.get(nb.id)
+        if (!cur) continue
+        cur.status = nb.status
+        cur.connected = nb.connected
+        cur.playing = nb.playing
+        cur.paused = nb.paused
+        cur.currentSong = nb.currentSong
+      }
+    } catch {
+      /* 轮询失败保持现状 */
+    }
+  }
+
   /** 切换 active bot：持久化 + 清旧 bot 播放态 + 拉新 bot */
   async function setActiveBot(id: string) {
     botGen++ // 作废所有 in-flight 轮询，防旧 bot 状态闪现
@@ -913,6 +955,7 @@ const channelName = ref('')
     channelRequired,
     channelDetail,
     channelName,
+    syncChannelBots,
     bots,
     activeBotId,
     activeBot,

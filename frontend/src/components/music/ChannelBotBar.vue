@@ -24,6 +24,11 @@ async function load() {
   }
 }
 
+// 轮询只做差异同步：频道和机器人集合没变就不动选中态，避免自动来回切换。
+function poll() {
+  void store.syncChannelBots()
+}
+
 function isOnline(bot: { connected?: boolean; status?: string }): boolean {
   return !!bot.connected || bot.status === 'connected'
 }
@@ -40,7 +45,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   load()
   // 机器人上线/掉线、换频道都要及时反映，5 秒轮询一次状态。
-  pollTimer = setInterval(load, 5000)
+  pollTimer = setInterval(poll, 5000)
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
