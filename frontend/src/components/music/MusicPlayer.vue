@@ -299,7 +299,7 @@ function isCurrent(item: { id?: string; platform?: string }): boolean {
             @change="onSeekEnd"
           />
           <div v-else class="scrubber-track"></div>
-          <span class="time mono">{{ fmt(effDur) }}</span>
+          <span class="time mono">{{ effDur ? fmt(effDur) : '--:--' }}</span>
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import QRCode from 'qrcode'
 import { getAuthStatus, getQrcode, getQrcodeStatus, setCookie, logoutPlatform, testJellyfin, saveJellyfin, type JellyfinForm } from '@/api/music'
 import { ElMessage } from 'element-plus'
@@ -36,6 +36,16 @@ const music = useMusicStore()
 // 登录态已提升到 store（供 MyMusic 置灰判断）；此处 status 为只读视图，模板沿用 status[p.value]
 const status = computed(() => music.ownPlatformStatus)
 const activePlatform = ref('')
+// 播放失败且音源未登录时，音乐 store 会置 pendingLoginPlatform，这里自动弹出二维码。
+watch(
+  () => music.pendingLoginPlatform,
+  async (platform) => {
+    if (!platform) return
+    music.pendingLoginPlatform = ''
+    const info = platforms.find((p) => p.value === platform)
+    if (info) await startLogin(info)
+  },
+)
 const qrImg = ref('')
 const currentQrKey = ref('') // 当前二维码 key（轮询 qrcode/status 用）
 const loading = ref(false)

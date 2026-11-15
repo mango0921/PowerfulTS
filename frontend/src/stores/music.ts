@@ -60,6 +60,8 @@ export const useMusicStore = defineStore('music', () => {
   const playMode = ref('seq')
   // 本地进度（每秒递增，轮询校正）
   const localPosition = ref(0)
+// 播放失败且疑似音源未登录时，置为目标平台，由平台账号面板自动弹出扫码。
+const pendingLoginPlatform = ref('')
 
   const searchPlatform = ref<'all' | 'netease' | 'qq' | 'bilibili' | 'kugou'>('all')
 
@@ -273,11 +275,16 @@ export const useMusicStore = defineStore('music', () => {
     //  - {error:"Bot not found"} 等：bot_id 无效 / bot 未连接 / 上游 4xx
     //  - {message:"Cannot play: ..."}：QQ 未登录 / 版权 VIP 限制
     if (res?.error) {
-      throw new Error(typeof res.error === 'string' ? res.error : '播放失败')
+      const text = typeof res.error === 'string' ? res.error : '播放失败'
+      if (/登录|login|cookie|unauthor|auth/i.test(text)) {
+        pendingLoginPlatform.value = platform || song?.platform || 'netease'
+      }
+      throw new Error(text)
     }
     const msg = res?.message
     if (typeof msg === 'string' && /cannot play/i.test(msg)) {
-      throw new Error('无法播放该曲目（可能需登录对应平台，或版权/VIP 限制）')
+      pendingLoginPlatform.value = platform || song?.platform || 'netease'
+      throw new Error('该音源未登录或版权受限，请扫码登录后再点歌')
     }
     const follow = res?.follow as { moved?: boolean; reason?: string } | undefined
     if (followEnabled.value && follow && !follow.moved && follow.reason !== 'already_together') {
@@ -293,11 +300,29 @@ export const useMusicStore = defineStore('music', () => {
       ElMessage.warning(followErrors[follow.reason || ''] || `机器人频道跟随失败：${follow.reason || 'unknown'}`)
     }
     await fetchNowplaying()
+    await fetchNowplaying()
     await fetchQueue()
+    void verifyPlaybackStarted(platform || song?.platform)
     return res
   }
 
-  /** 暂停 */
+  /**
+   * 上游对"未登录"有时返回成功但不播（解析失败/队列进不去）。
+   * 点歌后等几秒复查：没在播且该音源未登录 → 自动弹出扫码。
+   */
+  async function verifyPlaybackStarted(platform?: string) {
+    const target = platform || pendingLoginPlatform.value
+    if (!target) return
+    await new Promise((resolve) => setTimeout(resolve, 4000))
+    await fetchNowplaying().catch(() => {})
+    if (nowplaying.value?.playing) return
+    try {
+      const status = await apiGetAuthStatus(target, activeBotId.value)
+      if (!status?.loggedIn) pendingLoginPlatform.value = target
+    } catch {
+      pendingLoginPlatform.value = target
+    }
+  }
   async function pause() {
     await apiPause(activeBotId.value)
     await fetchNowplaying()
@@ -845,6 +870,7 @@ export const useMusicStore = defineStore('music', () => {
     volume,
     playMode,
     localPosition,
+    pendingLoginPlatform,
     bots,
     activeBotId,
     activeBot,

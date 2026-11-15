@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import apiClient from '@/api/client'
@@ -49,7 +49,15 @@ function goVoice() {
   router.push('/')
 }
 
-onMounted(load)
+let pollTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  load()
+  // 机器人上线/掉线、换频道都要及时反映，5 秒轮询一次状态。
+  pollTimer = setInterval(load, 5000)
+})
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
 defineExpose({ load })
 </script>
 
