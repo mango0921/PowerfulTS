@@ -147,12 +147,13 @@ async def _channel_bot_id(
 ) -> str:
     """把控制目标锁定到「当前所在频道」的音乐机器人（游客同样适用）。
 
-    频道里没有机器人时，自动从默认频道克隆/创建一台（见 channel_music_bot）。
+    只读路径：这里**绝不创建**机器人，否则状态轮询会变成克隆风暴。
+    创建只发生在点歌（ChannelBotIdCreate）。
     """
-    ctx = await ensure_channel_bot(db, tsmusic, account)
+    ctx = await channel_context(db, tsmusic, account)
     ids = [str(b.get("id")) for b in ctx["candidates"]]
     if not ids:
-        raise HTTPException(status_code=409, detail="当前频道没有可用的音乐机器人")
+        raise HTTPException(status_code=409, detail="当前频道没有音乐机器人（点歌时会自动创建）")
     if bot_id:
         if bot_id in ids:
             return bot_id
@@ -163,6 +164,25 @@ async def _channel_bot_id(
 
 
 ChannelBotId = Annotated[str, Depends(_channel_bot_id)]
+
+
+async def _channel_bot_id_create(
+    bot_id: BotIdQuery = None,
+    account: Account = Depends(get_music_account),
+    db: AsyncSession = Depends(get_db),
+    tsmusic: TsmusicDep = None,
+) -> str:
+    """点歌专用：频道里没有机器人时才创建/克隆一台。"""
+    ctx = await ensure_channel_bot(db, tsmusic, account)
+    ids = [str(b.get("id")) for b in ctx["candidates"]]
+    if not ids:
+        raise HTTPException(status_code=502, detail="音乐机器人准备失败，请稍后重试")
+    if bot_id and bot_id in ids:
+        return bot_id
+    return ids[0]
+
+
+ChannelBotIdCreate = Annotated[str, Depends(_channel_bot_id_create)]
 
 
 # ───────────────────────── 请求模型 ─────────────────────────
@@ -326,7 +346,7 @@ async def search(
 
 
 @router.post("/play")
-async def play(body: PlayRequest, request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: ChannelBotId = None):
+async def play(body: PlayRequest, request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: ChannelBotIdCreate = None):
     """播放（query 可以是歌名或 'id:xxx'，platform 指定音源）。"""
     # 音源未登录时上游会卡住（QQ 未登录时 search/url 都会长时间等待），
     # 先查登录态直接给前端一个可操作的结果，避免只等到 500/超时。

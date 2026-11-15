@@ -45,7 +45,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   load()
   // 机器人上线/掉线、换频道都要及时反映，5 秒轮询一次状态。
-  pollTimer = setInterval(poll, 5000)
+  pollTimer = setInterval(poll, 10000)
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
