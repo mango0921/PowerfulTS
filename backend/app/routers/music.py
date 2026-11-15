@@ -156,7 +156,9 @@ async def _channel_bot_id(
     if bot_id:
         if bot_id in ids:
             return bot_id
-        raise HTTPException(status_code=403, detail="只能控制你所在频道的音乐机器人")
+        # 前端 localStorage 里可能残留已不在本频道的旧 botId：回退到本频道第一台，
+        # 避免用户看到"无权操作"却无法自行恢复。
+        return ids[0]
     return ids[0]
 
 

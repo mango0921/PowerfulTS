@@ -57,6 +57,8 @@ export const useMusicStore = defineStore('music', () => {
   const nowplaying = ref<NowPlaying | null>(null)
   const queue = ref<Song[]>([])
   const volume = ref(50)
+// 拖动音量后的一段时间内忽略轮询回填
+let volumeTouchedUntil = 0
   const playMode = ref('seq')
   // 本地进度（每秒递增，轮询校正）
   const localPosition = ref(0)
@@ -357,13 +359,24 @@ const pendingLoginPlatform = ref('')
 
   /** 音量（防抖发送，避免频繁请求） */
   let volTimer: ReturnType<typeof setTimeout> | null = null
-  async function updateVolume(val: number) {
+  async function updateVolume(val: number): Promise<void> {
     volume.value = val
-    // 防抖：拖动结束后 300ms 才发送
+    volumeTouchedUntil = Date.now() + 5000
+    // 防抖：拖动结束后 300ms 才发送；返回的 Promise 在真正发送后结算，
+    // 这样界面能提示“音量设置失败”，而不是静默回弹。
     if (volTimer) clearTimeout(volTimer)
-    volTimer = setTimeout(async () => {
-      try { await apiSetVolume(val, activeBotId.value) } catch { /* 静默 */ }
-    }, 300)
+    return new Promise((resolve, reject) => {
+      volTimer = setTimeout(async () => {
+        try {
+          await apiSetVolume(val, activeBotId.value)
+          volumeTouchedUntil = Date.now() + 5000
+          resolve()
+        } catch (err) {
+          volumeTouchedUntil = 0
+          reject(err)
+        }
+      }, 300)
+    })
   }
 
   /** 清空队列 */
@@ -400,7 +413,8 @@ const pendingLoginPlatform = ref('')
       const np = await apiGetNowplaying(activeBotId.value)
       if (gen !== botGen) return // 切换发生，丢弃过期响应
       nowplaying.value = np
-      volume.value = np.volume ?? 50
+      // 用户刚拖过音量时，短暂忽略轮询回填，避免滑块被'弹回去'。
+      if (Date.now() > volumeTouchedUntil) volume.value = np.volume ?? 50
       playMode.value = np.playMode || 'seq'
       if (typeof np.position === 'number') localPosition.value = np.position
     } catch {

@@ -92,7 +92,7 @@ defineExpose({ load })
           <span class="cb-dot" :class="{ on: bot.connected }"></span>
           <span class="cb-name">{{ bot.name }}</span>
           <span class="cb-state label-mono">
-            {{ bot.playing ? (bot.currentSong?.name || '播放中') : (bot.connected ? '在线' : '离线') }}
+            {{ !bot.connected ? '离线' : (bot.playing ? (bot.currentSong?.name || '播放中') : '待播放') }}
           </span>
         </button>
       </div>
