@@ -526,7 +526,7 @@ async def voice_diagnostics(
     relay = await request.app.state.live_audio.status_for_bot(bid)
     try:
         upstream = await asyncio.wait_for(
-            tsmusic.get_bot_status(bot_id=bid),
+            tsmusic.get_bot_brief(bid),
             timeout=VOICE_DIAGNOSTICS_UPSTREAM_TIMEOUT_SECONDS,
         )
     except TimeoutError:

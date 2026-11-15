@@ -471,7 +471,7 @@ class VoiceBotManager:
 
     @staticmethod
     async def _is_connected(tsmusic: TSMusicClient, bot_id: str) -> bool:
-        status = await tsmusic.get_bot_status(bot_id)
+        status = await tsmusic.get_bot_brief(bot_id)
         if status is None or status.get("id") != bot_id:
             return False
         if status.get("status") != "connected":

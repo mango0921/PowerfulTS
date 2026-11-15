@@ -760,7 +760,8 @@ class TSMusicClient:
                 return {}
             cs = self._enrich(bot.get("currentSong") or {})
             return {
-                "playing": bot.get("playing", False),
+                "connected": bool(bot.get("connected")),
+            "playing": bot.get("playing", False),
                 "paused": bot.get("paused", False),
                 "volume": bot.get("volume", 50),
                 "playMode": bot.get("playMode", "seq"),
@@ -833,8 +834,8 @@ class TSMusicClient:
             logger.warning("TSMusicBot list_bots 失败: %s", exc)
             return []
 
-    async def get_bot_status(self, bot_id: str) -> dict | None:
-        """GET /api/bot/:id → 单个 bot 的状态（不受 purpose 过滤影响）。"""
+    async def get_bot_brief(self, bot_id: str) -> dict | None:
+        """GET /api/bot/:id 的简要状态（id/name/status/connected，不受 purpose 过滤）。"""
         await self._ensure_login()
         try:
             resp = await self._request("GET", f"/api/bot/{bot_id}")

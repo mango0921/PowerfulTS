@@ -103,7 +103,7 @@ async def _voice_client_id(db: AsyncSession, tsmusic: TSMusicClient, account: Ac
         raise HTTPException(status_code=409, detail="请先在网页通话中进入频道")
     clid = await tsmusic.get_bot_client_id(voice_bot_id)
     if not clid:
-        status = await tsmusic.get_bot_status(voice_bot_id)
+        status = await tsmusic.get_bot_brief(voice_bot_id)
         if status is None:
             # 映射指向的语音 bot 已被删除（例如后台清理过机器人）：清掉脏映射，
             # 让下一次进入网页通话时重新创建。
@@ -170,7 +170,7 @@ async def channel_context(
 
 async def _wait_connected(tsmusic: TSMusicClient, bot_id: str, seconds: int = CLONE_WAIT_SECONDS) -> bool:
     for _ in range(seconds):
-        status = await tsmusic.get_bot_status(bot_id)
+        status = await tsmusic.get_bot_brief(bot_id)
         if status and status.get("connected"):
             return True
         await asyncio.sleep(1)
@@ -206,7 +206,7 @@ async def _clone_from_template(
     await tsmusic.join_channel(cid, "", bot_id)
     invalidate_snapshot()
     logger.info("cloned music bot %s from %s into cid=%s", bot_id, template_id, cid)
-    return await tsmusic.get_bot_status(bot_id) or {"id": bot_id}
+    return await tsmusic.get_bot_brief(bot_id) or {"id": bot_id}
 
 
 async def ensure_channel_bot(
