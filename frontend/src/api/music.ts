@@ -207,6 +207,9 @@ export interface BotInfo {
   id: string
   name: string
   status: 'connected' | 'offline'
+  /** 后端在频道视图下会回传布尔连接状态与当前曲目 */
+  connected?: boolean
+  currentSong?: { name?: string } | null
   playing: boolean
   paused: boolean
   default?: boolean
