@@ -89,7 +89,7 @@ defineExpose({ load })
         </button>
       </div>
       <p v-if="!bots.length" class="cb-hint">
-        当前频道还没有音乐机器人，管理员在 MusicBot 后台派遣后这里会自动出现。
+        当前频道还没有音乐机器人。管理员在 MusicBot 后台把机器人派遣到该频道后，这里会自动显示。
       </p>
     </template>
   </section>

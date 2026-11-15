@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..core.database import get_db
-from ..services.channel_music_bot import channel_context, ensure_channel_bot
+from ..services.channel_music_bot import channel_context
 from ..deps import AdminDep, MusicAccountDep, TsmusicDep, VoiceAccountDep, get_current_account, get_music_account
 from ..models import Account, BotOwnership, BotShare, EntrySound, Friend, VoiceBot
 from ..services import bot_mover
@@ -147,13 +147,12 @@ async def _channel_bot_id(
 ) -> str:
     """把控制目标锁定到「当前所在频道」的音乐机器人（游客同样适用）。
 
-    只读路径：这里**绝不创建**机器人，否则状态轮询会变成克隆风暴。
-    创建只发生在点歌（ChannelBotIdCreate）。
+    只读解析：机器人由管理员在 TSMusicBot 后台添加/派遣，这里绝不创建。
     """
     ctx = await channel_context(db, tsmusic, account)
     ids = [str(b.get("id")) for b in ctx["candidates"]]
     if not ids:
-        raise HTTPException(status_code=409, detail="当前频道没有音乐机器人（点歌时会自动创建）")
+        raise HTTPException(status_code=409, detail="当前频道没有音乐机器人，请联系管理员在 MusicBot 后台添加后派遣到该频道")
     if bot_id:
         if bot_id in ids:
             return bot_id
@@ -166,23 +165,7 @@ async def _channel_bot_id(
 ChannelBotId = Annotated[str, Depends(_channel_bot_id)]
 
 
-async def _channel_bot_id_create(
-    bot_id: BotIdQuery = None,
-    account: Account = Depends(get_music_account),
-    db: AsyncSession = Depends(get_db),
-    tsmusic: TsmusicDep = None,
-) -> str:
-    """点歌专用：频道里没有机器人时才创建/克隆一台。"""
-    ctx = await ensure_channel_bot(db, tsmusic, account)
-    ids = [str(b.get("id")) for b in ctx["candidates"]]
-    if not ids:
-        raise HTTPException(status_code=502, detail="音乐机器人准备失败，请稍后重试")
-    if bot_id and bot_id in ids:
-        return bot_id
-    return ids[0]
 
-
-ChannelBotIdCreate = Annotated[str, Depends(_channel_bot_id_create)]
 
 
 # ───────────────────────── 请求模型 ─────────────────────────
@@ -346,7 +329,7 @@ async def search(
 
 
 @router.post("/play")
-async def play(body: PlayRequest, request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: ChannelBotIdCreate = None):
+async def play(body: PlayRequest, request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: ChannelBotId = None):
     """播放（query 可以是歌名或 'id:xxx'，platform 指定音源）。"""
     # 音源未登录时上游会卡住（QQ 未登录时 search/url 都会长时间等待），
     # 先查登录态直接给前端一个可操作的结果，避免只等到 500/超时。
