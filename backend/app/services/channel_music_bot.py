@@ -15,7 +15,7 @@ import time
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
@@ -103,7 +103,15 @@ async def _voice_client_id(db: AsyncSession, tsmusic: TSMusicClient, account: Ac
         raise HTTPException(status_code=409, detail="请先在网页通话中进入频道")
     clid = await tsmusic.get_bot_client_id(voice_bot_id)
     if not clid:
-        raise HTTPException(status_code=409, detail="网页通话尚未连接，请稍后再试")
+        status = await tsmusic.get_bot_status(voice_bot_id)
+        if status is None:
+            # 映射指向的语音 bot 已被删除（例如后台清理过机器人）：清掉脏映射，
+            # 让下一次进入网页通话时重新创建。
+            await db.execute(delete(VoiceBot).where(VoiceBot.account_id == account.id))
+            await db.commit()
+            raise HTTPException(status_code=409, detail="网页通话身份已失效，请重新进入网页通话")
+        # bot 存在但还没连上：不要删映射，稍后重试即可。
+        raise HTTPException(status_code=409, detail="网页通话正在连接，请稍后再试")
     return int(clid)
 
 
@@ -118,8 +126,21 @@ def _bots_in_channel(
         try:
             clid = int(bot.get("clientId") or 0)
         except (TypeError, ValueError):
-            continue
+            clid = 0
         client = by_clid.get(clid)
+        if client is None:
+            # TSMusicBot 上报的 clientId 可能滞后（重连后 clid 变化）；
+            # 退回到昵称匹配：播放时昵称形如 "♪ 歌名 - 机器人名"。
+            name = str(bot.get("name") or "").strip()
+            if name:
+                client = next(
+                    (
+                        c
+                        for c in clients
+                        if str(c.get("client_nickname") or "").strip().endswith(name)
+                    ),
+                    None,
+                )
         if client and _cid_of(client) == cid:
             found.append(bot)
     found.sort(key=lambda b: str(b.get("name") or ""))
