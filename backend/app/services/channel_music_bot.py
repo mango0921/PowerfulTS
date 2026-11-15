@@ -177,10 +177,21 @@ async def _wait_connected(tsmusic: TSMusicClient, bot_id: str, seconds: int = CL
     return False
 
 
+async def _move_into_channel(tsmusic: TSMusicClient, bot_id: str, cid: int) -> str | None:
+    """让机器人进入目标频道，返回 None 表示成功，否则返回失败原因。"""
+    result = await tsmusic.join_channel(cid, "", bot_id)
+    if result.get("ok"):
+        return None
+    return str(result.get("detail") or "切换频道失败")
+
+
 async def _clone_from_template(
     tsmusic: TSMusicClient, template: dict[str, Any], name: str, cid: int
-) -> dict[str, Any]:
-    """复制一台机器人（新身份、不继承音源登录），并让它进入目标频道。"""
+) -> str:
+    """复制一台机器人（新身份、不继承音源登录）并进入目标频道。
+
+    进入频道失败时会删掉刚创建的机器人，避免默认频道里堆积只创建不生效的克隆。
+    """
     template_id = str(template.get("id"))
     config = await tsmusic.get_bot_config(template_id)
     server_address = str(config.get("serverAddress") or "").strip()
@@ -200,13 +211,43 @@ async def _clone_from_template(
     bot_id = str(created.get("id") or "")
     if not bot_id:
         raise HTTPException(status_code=500, detail="创建音乐机器人失败")
-    await tsmusic.start_bot(bot_id)
-    if not await _wait_connected(tsmusic, bot_id):
-        raise HTTPException(status_code=504, detail="音乐机器人连接超时，请稍后再试")
-    await tsmusic.join_channel(cid, "", bot_id)
+    try:
+        await tsmusic.start_bot(bot_id)
+        if not await _wait_connected(tsmusic, bot_id):
+            raise HTTPException(status_code=504, detail="音乐机器人连接超时，请稍后再试")
+        failure = await _move_into_channel(tsmusic, bot_id, cid)
+        if failure:
+            _join_failure[cid] = (time.time() + JOIN_FAILURE_COOLDOWN_SECONDS, failure)
+            raise HTTPException(
+                status_code=502,
+                detail=f"音乐机器人无法进入该频道：{failure}（检查频道密码/权限）",
+            )
+    except Exception:
+        # 失败即清理，避免残留一台停在默认频道的克隆
+        try:
+            await tsmusic.delete_bot(bot_id)
+        except Exception:  # pragma: no cover - 清理失败不影响原始异常
+            logger.warning("failed to clean up clone %s", bot_id, exc_info=True)
+        invalidate_snapshot()
+        raise
+    _join_failure.pop(cid, None)
     invalidate_snapshot()
     logger.info("cloned music bot %s from %s into cid=%s", bot_id, template_id, cid)
-    return await tsmusic.get_bot_brief(bot_id) or {"id": bot_id}
+    return bot_id
+
+
+async def _find_stray_clone(bots: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+    """同名的克隆若已存在（之前进频道失败/被踢回默认频道），优先复用而不是再建一台。"""
+    for bot in bots:
+        if str(bot.get("name") or "") == name and str(bot.get("purpose") or "music") != "voice":
+            return bot
+    return None
+
+
+_create_locks: dict[int, asyncio.Lock] = {}
+# 进频道失败后的冷却：避免每次状态轮询都重复建/删机器人
+_join_failure: dict[int, tuple[float, str]] = {}
+JOIN_FAILURE_COOLDOWN_SECONDS = 120
 
 
 async def ensure_channel_bot(
@@ -219,38 +260,70 @@ async def ensure_channel_bot(
         return ctx
 
     cid = ctx["cid"]
-    name = f"{DEFAULT_BOT_NAME}-{ctx['channel_name']}"
-    template_bots = _bots_in_channel(ctx["clients"], DEFAULT_CHANNEL_CID, ctx["bots"])
-    if template_bots:
+    until, reason = _join_failure.get(cid, (0.0, ""))
+    if time.time() < until:
+        raise HTTPException(
+            status_code=502,
+            detail=f"音乐机器人无法进入该频道：{reason}（{int(until - time.time())} 秒后重试）",
+        )
+    lock = _create_locks.setdefault(cid, asyncio.Lock())
+    async with lock:
+        # 拿到锁后重新判定：并发轮询可能已经有人建好了
+        ctx = await channel_context(db, tsmusic, account)
+        if ctx["candidates"]:
+            ctx["created"] = False
+            return ctx
+
+        name = f"{DEFAULT_BOT_NAME}-{ctx['channel_name']}"
+        stray = await _find_stray_clone(ctx["bots"], name)
+        if stray is not None:
+            stray_id = str(stray.get("id"))
+            failure = await _move_into_channel(tsmusic, stray_id, cid)
+            if failure is None:
+                invalidate_snapshot()
+                ctx = await channel_context(db, tsmusic, account)
+                ctx["created"] = False
+                return ctx
+            # 复用也进不去（频道密码/权限），删掉重新按模板克隆
+            logger.warning("stray clone %s cannot join cid=%s: %s", stray_id, cid, failure)
+            try:
+                await tsmusic.delete_bot(stray_id)
+            except Exception:
+                logger.warning("failed to delete stray clone %s", stray_id, exc_info=True)
+            invalidate_snapshot()
+            ctx = await channel_context(db, tsmusic, account)
+
+        template_bots = _bots_in_channel(ctx["clients"], DEFAULT_CHANNEL_CID, ctx["bots"])
+        if template_bots:
+            await _clone_from_template(tsmusic, template_bots[0], name, cid)
+            ctx = await channel_context(db, tsmusic, account)
+            ctx["created"] = True
+            return ctx
+
+        # 默认频道也没有：先造一台默认音乐机器人，再克隆到当前频道。
+        settings = get_settings()
+        seed = {
+            "name": DEFAULT_BOT_NAME,
+            "nickname": DEFAULT_BOT_NAME,
+            "serverAddress": str(getattr(settings, "ts3_host", "") or "").strip(),
+            "serverPort": 9987,
+            "purpose": "music",
+            "autoStart": True,
+        }
+        if not seed["serverAddress"]:
+            raise HTTPException(status_code=500, detail="未配置 TS 服务器地址，无法创建音乐机器人")
+        created = await tsmusic.create_bot(seed)
+        seed_id = str(created.get("id") or "")
+        if not seed_id:
+            raise HTTPException(status_code=500, detail="创建默认音乐机器人失败")
+        await tsmusic.start_bot(seed_id)
+        await _wait_connected(tsmusic, seed_id)
+        invalidate_snapshot()
+        ctx = await channel_context(db, tsmusic, account)
+        template_bots = _bots_in_channel(ctx["clients"], DEFAULT_CHANNEL_CID, ctx["bots"])
+        if not template_bots:
+            raise HTTPException(status_code=504, detail="默认音乐机器人尚未就绪，请稍后再试")
         await _clone_from_template(tsmusic, template_bots[0], name, cid)
         ctx = await channel_context(db, tsmusic, account)
         ctx["created"] = True
         return ctx
-
-    # 默认频道也没有：先造一台默认音乐机器人，再克隆到当前频道。
-    settings = get_settings()
-    seed = {
-        "name": DEFAULT_BOT_NAME,
-        "nickname": DEFAULT_BOT_NAME,
-        "serverAddress": str(getattr(settings, "ts3_host", "") or "").strip(),
-        "serverPort": 9987,
-        "purpose": "music",
-        "autoStart": True,
-    }
-    if not seed["serverAddress"]:
-        raise HTTPException(status_code=500, detail="未配置 TS 服务器地址，无法创建音乐机器人")
-    created = await tsmusic.create_bot(seed)
-    seed_id = str(created.get("id") or "")
-    if not seed_id:
-        raise HTTPException(status_code=500, detail="创建默认音乐机器人失败")
-    await tsmusic.start_bot(seed_id)
-    await _wait_connected(tsmusic, seed_id)
-    invalidate_snapshot()
-    ctx = await channel_context(db, tsmusic, account)
-    template_bots = _bots_in_channel(ctx["clients"], DEFAULT_CHANNEL_CID, ctx["bots"])
-    if not template_bots:
-        raise HTTPException(status_code=504, detail="默认音乐机器人尚未就绪，请稍后再试")
-    await _clone_from_template(tsmusic, template_bots[0], name, cid)
-    ctx = await channel_context(db, tsmusic, account)
-    ctx["created"] = True
-    return ctx
