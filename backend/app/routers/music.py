@@ -328,10 +328,32 @@ async def search(
 @router.post("/play")
 async def play(body: PlayRequest, request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: ChannelBotId = None):
     """播放（query 可以是歌名或 'id:xxx'，platform 指定音源）。"""
-    if body.queue:
-        result = await tsmusic.add(body.query, platform=body.platform, meta=body.meta, bot_id=bot_id)
-    else:
-        result = await tsmusic.play(body.query, platform=body.platform, meta=body.meta, bot_id=bot_id)
+    # 音源未登录时上游会卡住（QQ 未登录时 search/url 都会长时间等待），
+    # 先查登录态直接给前端一个可操作的结果，避免只等到 500/超时。
+    if body.platform:
+        try:
+            status = await asyncio.wait_for(
+                tsmusic.get_auth_status(body.platform, bot_id), timeout=8
+            )
+            if status is not None and not status.get("loggedIn"):
+                return {
+                    "error": f"{body.platform} 未登录，请扫码登录后重试",
+                    "authRequired": True,
+                    "platform": body.platform,
+                }
+        except (TimeoutError, httpx.HTTPError, ValueError):
+            pass
+    try:
+        if body.queue:
+            result = await tsmusic.add(body.query, platform=body.platform, meta=body.meta, bot_id=bot_id)
+        else:
+            result = await tsmusic.play(body.query, platform=body.platform, meta=body.meta, bot_id=bot_id)
+    except httpx.TimeoutException:
+        return {
+            "error": f"{body.platform or '该音源'} 响应超时：可能未登录或网络受限，请登录后重试",
+            "authRequired": True,
+            "platform": body.platform,
+        }
     # 先让播放动作唤醒可能被空闲管理器断开的 Bot，再执行频道跟随。
     follow = await _ensure_follow(request, tsmusic, account, bot_id)
     if isinstance(result, dict):

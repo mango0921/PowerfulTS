@@ -276,7 +276,19 @@ const channelName = ref('')
 
   /** 播放（query=歌名 或 'id:xxx'，platform 指定音源，song 透传元数据用于回填 QQ 入队丢失字段） */
   async function play(query: string, queued = false, platform?: string, song?: Song) {
-    const res = await apiPlay(query, queued, platform, song, activeBotId.value)
+    let res: any
+    try {
+      res = await apiPlay(query, queued, platform, song, activeBotId.value)
+    } catch (err: any) {
+      const status = err?.response?.status
+      const detail = String(err?.response?.data?.detail || '')
+      if (status === 409) {
+        ElMessage.warning(detail || '请先进入网页通话，再控制所在频道的音乐机器人')
+      } else if (status === 403) {
+        ElMessage.warning(detail || '只能控制你所在频道的音乐机器人')
+      }
+      throw err
+    }
     // 上游 play 失败时仍返回 HTTP 200，必须显式检查并抛出，否则前端会误显示"正在播放"但实际没播：
     //  - {error:"Bot not found"} 等：bot_id 无效 / bot 未连接 / 上游 4xx
     //  - {message:"Cannot play: ..."}：QQ 未登录 / 版权 VIP 限制
