@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import MusicSearch from '@/components/music/MusicSearch.vue'
 import MusicPlayer from '@/components/music/MusicPlayer.vue'
-import BotManager from '@/components/music/BotManager.vue'
+import ChannelBotBar from '@/components/music/ChannelBotBar.vue'
 import PlatformAccounts from '@/components/music/PlatformAccounts.vue'
 import MyMusic from '@/components/music/MyMusic.vue'
 import LiveAudioShare from '@/components/music/LiveAudioShare.vue'
@@ -35,7 +35,7 @@ const music = useMusicStore()
       </div>
 
       <div class="music-side">
-        <BotManager />
+        <ChannelBotBar />
         <MusicPlayer />
         <PlatformAccounts />
       </div>

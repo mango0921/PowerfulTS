@@ -43,7 +43,7 @@ let pollTimer: number | null = null
 
 async function startLogin(p: PlatformInfo) {
   if (!music.ownLibraryBotId) {
-    ElMessage.warning('请先在「TS Bot」面板创建一个 Bot，再登录平台账号（平台账号绑定到 Bot 实例）')
+    ElMessage.warning('当前频道还没有音乐机器人，请联系管理员在 MusicBot 后台派遣后再登录平台账号')
     return
   }
   activePlatform.value = p.value

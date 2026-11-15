@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
 from ..core.database import get_db
+from ..services.channel_music_bot import channel_context, ensure_channel_bot
 from ..deps import AdminDep, MusicAccountDep, TsmusicDep, VoiceAccountDep, get_current_account, get_music_account
 from ..models import Account, BotOwnership, BotShare, EntrySound, Friend, VoiceBot
 from ..services import bot_mover
@@ -137,6 +138,29 @@ async def _library_bot_id(
 
 
 LibraryBotId = Annotated[str, Depends(_library_bot_id)]
+
+async def _channel_bot_id(
+    bot_id: BotIdQuery = None,
+    account: Account = Depends(get_music_account),
+    db: AsyncSession = Depends(get_db),
+    tsmusic: TsmusicDep = None,
+) -> str:
+    """把控制目标锁定到「当前所在频道」的音乐机器人（游客同样适用）。
+
+    频道里没有机器人时，自动从默认频道克隆/创建一台（见 channel_music_bot）。
+    """
+    ctx = await ensure_channel_bot(db, tsmusic, account)
+    ids = [str(b.get("id")) for b in ctx["candidates"]]
+    if not ids:
+        raise HTTPException(status_code=409, detail="当前频道没有可用的音乐机器人")
+    if bot_id:
+        if bot_id in ids:
+            return bot_id
+        raise HTTPException(status_code=403, detail="只能控制你所在频道的音乐机器人")
+    return ids[0]
+
+
+ChannelBotId = Annotated[str, Depends(_channel_bot_id)]
 
 
 # ───────────────────────── 请求模型 ─────────────────────────
@@ -292,7 +316,7 @@ async def search(
     tsmusic: TsmusicDep,
     _account: MusicAccountDep,
     platform: str | None = None,
-    bot_id: OwnedBotId = None,
+    bot_id: ChannelBotId = None,
 ):
     """搜索歌曲（per-bot：带 botId 用该 bot 的平台 cookie 搜索）。"""
     results = await tsmusic.search(q, platform=platform, bot_id=bot_id)
@@ -300,7 +324,7 @@ async def search(
 
 
 @router.post("/play")
-async def play(body: PlayRequest, request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def play(body: PlayRequest, request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: ChannelBotId = None):
     """播放（query 可以是歌名或 'id:xxx'，platform 指定音源）。"""
     if body.queue:
         result = await tsmusic.add(body.query, platform=body.platform, meta=body.meta, bot_id=bot_id)
@@ -1077,57 +1101,57 @@ async def stream_voice_downlink(websocket: WebSocket, ticket_id: str):
 
 
 @router.post("/pause")
-async def pause(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def pause(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     return await tsmusic.pause(bot_id=bot_id)
 
 
 @router.post("/resume")
-async def resume(request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def resume(request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: ChannelBotId = None):
     result = await tsmusic.resume(bot_id=bot_id)
     await _ensure_follow(request, tsmusic, account, bot_id)
     return result
 
 
 @router.post("/next")
-async def next_track(request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def next_track(request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: ChannelBotId = None):
     result = await tsmusic.next(bot_id=bot_id)
     await _ensure_follow(request, tsmusic, account, bot_id)
     return result
 
 
 @router.post("/stop")
-async def stop(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def stop(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     return await tsmusic.stop(bot_id=bot_id)
 
 
 @router.post("/seek")
-async def seek(body: SeekRequest, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def seek(body: SeekRequest, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     return await tsmusic.seek(body.position, bot_id=bot_id)
 
 
 @router.post("/volume")
-async def set_volume(body: VolumeRequest, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def set_volume(body: VolumeRequest, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     return await tsmusic.set_volume(body.volume, bot_id=bot_id)
 
 
 @router.post("/mode")
-async def set_mode(body: ModeRequest, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def set_mode(body: ModeRequest, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     return await tsmusic.set_mode(body.mode, bot_id=bot_id)
 
 
 @router.post("/clear")
-async def clear(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def clear(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     return await tsmusic.clear(bot_id=bot_id)
 
 
 @router.get("/nowplaying")
-async def now_playing(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def now_playing(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     """当前播放状态（歌名/歌手/进度/封面/音量）。"""
     return await tsmusic.get_bot_status(bot_id=bot_id)
 
 
 @router.get("/queue")
-async def queue(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def queue(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     """播放队列。"""
     items = await tsmusic.get_queue(bot_id=bot_id)
     return {"count": len(items), "items": items}
@@ -1138,7 +1162,7 @@ async def remove_from_queue(
     index: Annotated[int, Path(ge=0)],
     tsmusic: TsmusicDep,
     _account: MusicAccountDep,
-    bot_id: OwnedBotId = None,
+    bot_id: ChannelBotId = None,
 ):
     """移除队列中指定位置的单曲（前端传 0-based 索引，内部转上游 1-based !remove）。"""
     return await tsmusic.remove_from_queue(index, bot_id=bot_id)
@@ -1150,7 +1174,7 @@ async def play_at(
     request: Request,
     tsmusic: TsmusicDep,
     account: MusicAccountDep,
-    bot_id: OwnedBotId = None,
+    bot_id: ChannelBotId = None,
 ):
     """跳转到队列中指定位置播放（点击队列项切歌；index 越界或不可播时 400）。"""
     result = await tsmusic.play_at(index, bot_id=bot_id)
@@ -1166,7 +1190,7 @@ async def move_queue_item(
     body: MoveRequest,
     tsmusic: TsmusicDep,
     _account: MusicAccountDep,
-    bot_id: OwnedBotId = None,
+    bot_id: ChannelBotId = None,
 ):
     """拖动调序：移动队列项到新位置（index=from，body.to=目标）。"""
     result = await tsmusic.move_queue_item(index, body.to, bot_id=bot_id)
@@ -1179,7 +1203,7 @@ async def move_queue_item(
 
 
 @router.get("/quality")
-async def get_quality(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def get_quality(tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     """获取当前 bot 的音质配置（各平台独立）。"""
     return await tsmusic.get_quality(bot_id=bot_id)
 
@@ -1189,7 +1213,7 @@ async def set_quality(
     body: Annotated[dict, Body(description="音质设置 {quality, platform?}")],
     tsmusic: TsmusicDep,
     _account: MusicAccountDep,
-    bot_id: OwnedBotId = None,
+    bot_id: ChannelBotId = None,
 ):
     """设置音质（quality 必填，platform 可选）。"""
     quality = body.get("quality")
@@ -1209,7 +1233,7 @@ async def set_quality(
 
 
 @router.get("/my/playlists")
-async def my_playlists(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: LibraryBotId):
+async def my_playlists(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId):
     """当前用户的歌单；共享 Bot 不会暴露其主人的私人曲库。"""
     return await tsmusic.user_playlists(platform, bot_id=bot_id)
 
@@ -1223,7 +1247,7 @@ async def my_playlist_songs(
     platform: str,
     tsmusic: TsmusicDep,
     _account: MusicAccountDep,
-    bot_id: LibraryBotId,
+    bot_id: ChannelBotId,
 ):
     """歌单内歌曲（per-bot；playlist_id 限定字母/数字/下划线/短横，防路径注入）。"""
     if not _PLAYLIST_ID_RE.fullmatch(playlist_id):
@@ -1234,7 +1258,7 @@ async def my_playlist_songs(
 @router.get("/my/playlist/{playlist_id}/cover")
 async def my_playlist_cover(
     playlist_id: str, platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep,
-    bot_id: LibraryBotId, songs_only: bool = Query(default=False, alias="songsOnly"),
+    bot_id: ChannelBotId, songs_only: bool = Query(default=False, alias="songsOnly"),
 ):
     if not _PLAYLIST_ID_RE.fullmatch(playlist_id):
         raise HTTPException(status_code=400, detail="invalid playlist_id")
@@ -1244,13 +1268,13 @@ async def my_playlist_cover(
 
 
 @router.get("/my/recommend/songs")
-async def my_recommend_songs(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: LibraryBotId):
+async def my_recommend_songs(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId):
     """每日推荐（per-bot）。"""
     return await tsmusic.recommend_songs(platform, bot_id=bot_id)
 
 
 @router.get("/my/personal-fm")
-async def my_personal_fm(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: LibraryBotId):
+async def my_personal_fm(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId):
     """私人 FM（per-bot）。"""
     return await tsmusic.personal_fm(platform, bot_id=bot_id)
 
@@ -1260,7 +1284,7 @@ async def my_bilibili_popular(
     tsmusic: TsmusicDep,
     _account: MusicAccountDep,
     limit: int = 20,
-    bot_id: OwnedBotId = None,
+    bot_id: ChannelBotId = None,
 ):
     """B 站热门视频（无需登录，per-bot）。"""
     return await tsmusic.bilibili_popular(limit, bot_id=bot_id)
@@ -1272,7 +1296,7 @@ class EnqueueRequest(BaseModel):
 
 
 @router.post("/my/enqueue")
-async def my_enqueue(body: EnqueueRequest, request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: OwnedBotId = None):
+async def my_enqueue(body: EnqueueRequest, request: Request, tsmusic: TsmusicDep, account: MusicAccountDep, bot_id: ChannelBotId = None):
     """批量入队：并发上限 4，单首失败容忍。整批只跟随一次。"""
     result = await tsmusic.enqueue_songs(body.songs, platform=body.platform, bot_id=bot_id)
     await _ensure_follow(request, tsmusic, account, bot_id)
@@ -1361,48 +1385,16 @@ async def get_bot_defaults(_account: MusicAccountDep, db: AsyncSession = Depends
 
 @router.get("/bots")
 async def list_bots(tsmusic: TsmusicDep, account: MusicAccountDep, db: AsyncSession = Depends(get_db)):
-    """bot 实例列表（自己拥有的 + 好友共享给我的；含连接 / 播放状态）。"""
-    all_bots = await tsmusic.list_bots()
-    owned = await _owned_bot_ids(db, account.id)
-    # 共享给我的：bot_id -> (owner_account_id, 是否附带歌单权限)
-    shared_rows = (
-        await db.execute(
-            select(BotShare.bot_id, BotShare.owner_account_id, BotShare.share_playlists).where(
-                BotShare.shared_to_account_id == account.id
-            )
-        )
-    ).all()
-    shared_map = {r[0]: (r[1], bool(r[2])) for r in shared_rows}
-    # 共享 bot 的 owner 昵称
-    owner_ids = {value[0] for value in shared_map.values() if value[0] is not None}
-    owner_nicks: dict[int, str] = {}
-    if owner_ids:
-        nick_rows = (
-            await db.execute(
-                select(Account.id, Account.ts_nickname).where(Account.id.in_(owner_ids))
-            )
-        ).all()
-        owner_nicks = {r[0]: r[1] for r in nick_rows}
-
-    out = []
-    if account.role == "guest":
-        # 游客没有归属关系：直接展示全部音乐机器人，可正常点歌/控制。
-        return {"bots": all_bots}
-    for b in all_bots:
-        bid = b.get("id")
-        if bid in owned:
-            out.append(b)
-        elif bid in shared_map:
-            owner_id, share_playlists = shared_map[bid]
-            out.append({
-                **b,
-                "shared": True,
-                "ownerNickname": owner_nicks.get(owner_id, "好友"),
-                "sharePlaylists": share_playlists,
-            })
-    return {"bots": out}
-
-
+    """只返回当前所在频道的音乐机器人（不再暴露全服机器人列表）。"""
+    try:
+        ctx = await channel_context(db, tsmusic, account)
+    except HTTPException as exc:
+        return {"bots": [], "channelRequired": True, "detail": exc.detail}
+    return {
+        "bots": ctx["candidates"],
+        "channelId": ctx["cid"],
+        "channelName": ctx["channel_name"],
+    }
 @router.post("/bots")
 async def create_bot(body: BotCreate, tsmusic: TsmusicDep, account: MusicAccountDep, db: AsyncSession = Depends(get_db)):
     """创建 bot 并记录 owner（identity 自动生成，不自动连接）。"""
@@ -1725,19 +1717,19 @@ async def delete_bot_avatar(bot_id: str, tsmusic: TsmusicDep, _account: MusicAcc
 
 
 @router.get("/auth/status")
-async def auth_status(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: LibraryBotId):
+async def auth_status(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId):
     """获取当前用户自己平台账号的登录状态，不披露共享 Bot 主人的账号信息。"""
     return await tsmusic.get_auth_status(platform, bot_id=bot_id)
 
 
 @router.get("/auth/qrcode/status")
-async def auth_qrcode_status(key: str, platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: StrictOwnedBotId = None):
+async def auth_qrcode_status(key: str, platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     """轮询二维码扫码状态（per-bot；fork 在 confirmed 时自动持久化 cookie）。"""
     return await tsmusic.get_qrcode_status(key, platform, bot_id=bot_id)
 
 
 @router.post("/auth/qrcode")
-async def auth_qrcode(body: dict, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: StrictOwnedBotId = None):
+async def auth_qrcode(body: dict, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     """获取某平台登录二维码（per-bot）。"""
     platform = body.get("platform", "netease")
     return await tsmusic.get_qrcode(platform, bot_id=bot_id)
@@ -1749,13 +1741,13 @@ class CookieRequest(BaseModel):
 
 
 @router.post("/auth/cookie")
-async def auth_cookie(body: CookieRequest, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: StrictOwnedBotId = None):
+async def auth_cookie(body: CookieRequest, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     """手动设置某平台 cookie（per-bot：绑定到该 bot）。"""
     return await tsmusic.set_cookie(body.platform, body.cookie, bot_id=bot_id)
 
 
 @router.delete("/auth/cookie")
-async def auth_logout(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: StrictOwnedBotId = None):
+async def auth_logout(platform: str, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None):
     """退出某平台登录（清除该 bot 的平台 cookie；Jellyfin 清除该 bot 的凭据）。"""
     return await tsmusic.delete_cookie(platform, bot_id=bot_id)
 
@@ -1780,7 +1772,7 @@ class JellyfinForm(BaseModel):
 
 @router.post("/auth/jellyfin/test")
 async def auth_jellyfin_test(
-    body: JellyfinForm, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: StrictOwnedBotId = None
+    body: JellyfinForm, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None
 ):
     """测试该 bot 的 Jellyfin 连接（空凭据字段回落该 bot 已存值，不落盘）。"""
     return await tsmusic.jellyfin_test(body.model_dump(), bot_id=bot_id)
@@ -1788,7 +1780,7 @@ async def auth_jellyfin_test(
 
 @router.post("/auth/jellyfin/login")
 async def auth_jellyfin_login(
-    body: JellyfinForm, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: StrictOwnedBotId = None
+    body: JellyfinForm, tsmusic: TsmusicDep, _account: MusicAccountDep, bot_id: ChannelBotId = None
 ):
     """保存该 bot 的 Jellyfin 凭据（热重配 + 验证连接）。"""
     return await tsmusic.jellyfin_login(body.model_dump(), bot_id=bot_id)
