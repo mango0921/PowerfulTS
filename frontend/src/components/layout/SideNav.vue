@@ -31,7 +31,7 @@ const activeIndex = computed(() => {
 
 function navigate(key: string) {
   // 游客受限功能 → 跳登录页（保留游客态；登录成功后由 setToken 升级为真实用户）
-  if (auth.isGuest && (key === 'music' || key === 'friends' || key === 'steam')) {
+  if (auth.isGuest && (key === 'friends' || key === 'steam')) {
     router.push('/login')
     return
   }
@@ -72,10 +72,9 @@ function navigate(key: string) {
         <span>服务器监控</span>
       </el-menu-item>
 
-      <el-menu-item index="music" :class="{ 'guest-locked': auth.isGuest }">
+      <el-menu-item index="music">
         <el-icon><Headset /></el-icon>
         <span>音乐控制</span>
-        <span v-if="auth.isGuest" class="lock-hint label-mono">登录后查看</span>
       </el-menu-item>
 
       <el-menu-item index="friends" :class="{ 'guest-locked': auth.isGuest }">

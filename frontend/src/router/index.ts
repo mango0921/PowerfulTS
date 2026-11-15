@@ -76,7 +76,7 @@ router.beforeEach((to, _from, next) => {
     return
   }
   // 游客可查看面板并使用网页通话；音乐/好友/Steam/管理仍受限。
-  if (isGuest && !['Login', 'Dashboard', 'Voice'].includes(String(to.name))) {
+  if (isGuest && !['Login', 'Dashboard', 'Voice', 'Music'].includes(String(to.name))) {
     next({ name: 'Voice' })
     return
   }

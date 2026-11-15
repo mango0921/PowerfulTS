@@ -50,6 +50,14 @@ async def get_voice_account(account: AuthenticatedAccountDep) -> Account:
 VoiceAccountDep = Annotated[Account, Depends(get_voice_account)]
 
 
+async def get_music_account(account: AuthenticatedAccountDep) -> Account:
+    """音乐控制板块：注册用户与游客同等可用。"""
+    return account
+
+
+MusicAccountDep = Annotated[Account, Depends(get_music_account)]
+
+
 async def require_admin(account: AccountDep) -> Account:
     """要求当前账号是 admin，否则 403。供管理类端点（系统设置等）用。"""
     if account.role != "admin":
