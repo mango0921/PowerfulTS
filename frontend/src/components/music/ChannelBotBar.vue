@@ -1,44 +1,31 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import apiClient from '@/api/client'
 import { useMusicStore } from '@/stores/music'
-
-interface ChannelBotInfo {
-  id: string
-  name: string
-  connected?: boolean
-  playing?: boolean
-  currentSong?: { name?: string } | null
-}
 
 const store = useMusicStore()
 const router = useRouter()
 const loading = ref(false)
-const channelRequired = ref(false)
-const detail = ref('')
-const channelName = ref('')
-const bots = ref<ChannelBotInfo[]>([])
 
-const active = computed(() => bots.value.find((b) => b.id === store.activeBotId) || bots.value[0] || null)
+const bots = computed(() => store.bots)
+const channelRequired = computed(() => store.channelRequired)
+const detail = computed(() => store.channelDetail)
+const channelName = computed(() => store.channelName)
+const active = computed(
+  () => bots.value.find((b) => b.id === store.activeBotId) || bots.value[0] || null,
+)
 
 async function load() {
   loading.value = true
   try {
-    const { data } = await apiClient.get('/music/bots')
-    channelRequired.value = !!data.channelRequired
-    detail.value = String(data.detail || '')
-    channelName.value = String(data.channelName || '')
-    bots.value = (data.bots || []) as ChannelBotInfo[]
-    if (bots.value.length && !bots.value.some((b) => b.id === store.activeBotId)) {
-      store.setActiveBot(bots.value[0].id)
-    }
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.detail || '读取频道机器人失败')
+    await store.fetchBots()
   } finally {
     loading.value = false
   }
+}
+
+function isOnline(bot: { connected?: boolean; status?: string }): boolean {
+  return !!bot.connected || bot.status === 'connected'
 }
 
 function switchBot(id: string) {
@@ -86,13 +73,13 @@ defineExpose({ load })
           v-for="bot in bots"
           :key="bot.id"
           class="cb-bot"
-          :class="{ active: bot.id === (active?.id) }"
+          :class="{ active: bot.id === active?.id }"
           @click="switchBot(bot.id)"
         >
-          <span class="cb-dot" :class="{ on: bot.connected }"></span>
+          <span class="cb-dot" :class="{ on: isOnline(bot) }"></span>
           <span class="cb-name">{{ bot.name }}</span>
           <span class="cb-state label-mono">
-            {{ !bot.connected ? '离线' : (bot.playing ? (bot.currentSong?.name || '播放中') : '待播放') }}
+            {{ !isOnline(bot) ? '离线' : (bot.playing ? (bot.currentSong?.name || '播放中') : '待播放') }}
           </span>
         </button>
       </div>

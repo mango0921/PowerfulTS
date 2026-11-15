@@ -71,6 +71,10 @@ const pendingLoginPlatform = ref('')
   const LS_ACTIVE_BOT = 'active_bot_id'
   const LS_LIBRARY_BOT = 'library_bot_id'
   const bots = ref<BotInfo[]>([])
+// 频道维度信息：没有音乐机器人时给出明确提示
+const channelRequired = ref(false)
+const channelDetail = ref('')
+const channelName = ref('')
   const activeBotId = ref<string>('')
   const activeBot = computed(() => bots.value.find((b) => b.id === activeBotId.value) || null)
   const ownLibraryBotId = computed(() => bots.value.find((b) => !b.shared)?.id || '')
@@ -313,11 +317,16 @@ const pendingLoginPlatform = ref('')
    * 点歌后等几秒复查：没在播且该音源未登录 → 自动弹出扫码。
    */
   async function verifyPlaybackStarted(platform?: string) {
-    const target = platform || pendingLoginPlatform.value
-    if (!target) return
     await new Promise((resolve) => setTimeout(resolve, 4000))
     await fetchNowplaying().catch(() => {})
-    if (nowplaying.value?.playing) return
+    const np = nowplaying.value
+    if (np?.playing) return
+    // 平台信息可能没从点歌入口传进来，用当前曲目回填。
+    const target = platform || np?.platform || pendingLoginPlatform.value
+    if (!target) {
+      ElMessage.warning('播放没有开始：可能音源未登录或版权受限，请在该音源登录后重试')
+      return
+    }
     try {
       const status = await apiGetAuthStatus(target, activeBotId.value)
       if (!status?.loggedIn) pendingLoginPlatform.value = target
@@ -623,6 +632,10 @@ const pendingLoginPlatform = ref('')
     try {
       const res = await apiGetBots()
       bots.value = res.bots || []
+      const raw = res as { channelRequired?: boolean; detail?: string; channelName?: string }
+      channelRequired.value = !!raw.channelRequired
+      channelDetail.value = String(raw.detail || '')
+      channelName.value = String(raw.channelName || '')
     } catch {
       bots.value = []
     }
@@ -885,6 +898,9 @@ const pendingLoginPlatform = ref('')
     playMode,
     localPosition,
     pendingLoginPlatform,
+    channelRequired,
+    channelDetail,
+    channelName,
     bots,
     activeBotId,
     activeBot,
