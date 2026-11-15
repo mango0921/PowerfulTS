@@ -197,9 +197,11 @@ async def _clone_from_template(
     server_address = str(config.get("serverAddress") or "").strip()
     if not server_address:
         raise HTTPException(status_code=500, detail="模板机器人缺少服务器地址，无法克隆")
+    # TS 昵称必须唯一：同频道多台克隆同名时后连上的会被踢（id=513）。
+    nickname = f"{name}-{secrets.token_hex(2)}"
     payload = {
         "name": name,
-        "nickname": name,
+        "nickname": nickname,
         "serverAddress": server_address,
         "serverPort": int(config.get("serverPort") or 9987),
         "serverPassword": config.get("serverPassword") or "",
@@ -207,29 +209,30 @@ async def _clone_from_template(
         "purpose": "music",
         "autoStart": True,
     }
-    created = await tsmusic.create_bot(payload)
-    bot_id = str(created.get("id") or "")
-    if not bot_id:
-        raise HTTPException(status_code=500, detail="创建音乐机器人失败")
-    try:
-        await tsmusic.start_bot(bot_id)
-        if not await _wait_connected(tsmusic, bot_id):
-            raise HTTPException(status_code=504, detail="音乐机器人连接超时，请稍后再试")
-        failure = await _move_into_channel(tsmusic, bot_id, cid)
-        if failure:
-            _join_failure[cid] = (time.time() + JOIN_FAILURE_COOLDOWN_SECONDS, failure)
-            raise HTTPException(
-                status_code=502,
-                detail=f"音乐机器人无法进入该频道：{failure}（检查频道密码/权限）",
-            )
-    except Exception:
-        # 失败即清理，避免残留一台停在默认频道的克隆
+    async with _clone_semaphore:
+        created = await tsmusic.create_bot(payload)
+        bot_id = str(created.get("id") or "")
+        if not bot_id:
+            raise HTTPException(status_code=500, detail="创建音乐机器人失败")
         try:
-            await tsmusic.delete_bot(bot_id)
-        except Exception:  # pragma: no cover - 清理失败不影响原始异常
-            logger.warning("failed to clean up clone %s", bot_id, exc_info=True)
-        invalidate_snapshot()
-        raise
+            await tsmusic.start_bot(bot_id)
+            if not await _wait_connected(tsmusic, bot_id):
+                raise HTTPException(status_code=504, detail="音乐机器人连接超时，请稍后再试")
+            failure = await _move_into_channel(tsmusic, bot_id, cid)
+            if failure:
+                _join_failure[cid] = (time.time() + JOIN_FAILURE_COOLDOWN_SECONDS, failure)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"音乐机器人无法进入该频道：{failure}（检查频道密码/权限）",
+                )
+        except Exception:
+            # 失败即清理，避免残留一台停在默认频道的克隆
+            try:
+                await tsmusic.delete_bot(bot_id)
+            except Exception:  # pragma: no cover - 清理失败不影响原始异常
+                logger.warning("failed to clean up clone %s", bot_id, exc_info=True)
+            invalidate_snapshot()
+            raise
     _join_failure.pop(cid, None)
     invalidate_snapshot()
     logger.info("cloned music bot %s from %s into cid=%s", bot_id, template_id, cid)
@@ -245,6 +248,8 @@ async def _find_stray_clone(bots: list[dict[str, Any]], name: str) -> dict[str, 
 
 
 _create_locks: dict[int, asyncio.Lock] = {}
+# 同一时刻只允许一个克隆在连接：TS 同时握手多个客户端会互相拖到超时
+_clone_semaphore = asyncio.Semaphore(1)
 # 进频道失败后的冷却：避免每次状态轮询都重复建/删机器人
 _join_failure: dict[int, tuple[float, str]] = {}
 JOIN_FAILURE_COOLDOWN_SECONDS = 120
