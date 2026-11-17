@@ -205,6 +205,25 @@ async def lifespan(app: FastAPI):
     app.state.ts3_monitor.set_voice_exclusivity(app.state.voice_exclusivity)
     app.state.ts3_monitor.start()
     guest_cleanup_task = asyncio.create_task(_cleanup_expired_guests_loop(app))
+    # 启动时清理"孤儿"网页语音 bot：本次启动前不存在任何浏览器连接，
+    # 仍在线的 voice bot 只可能是上次进程异常退出/重启留下的（否则会一直挂在频道里）。
+    async def _reconcile_voice_bots() -> None:
+        await asyncio.sleep(3)
+        try:
+            from sqlalchemy import select
+            from .models import VoiceBot
+            async with AsyncSessionLocal() as session:
+                rows = (await session.scalars(select(VoiceBot))).all()
+            for row in rows:
+                try:
+                    await app.state.tsmusic.stop_bot(row.bot_id)
+                    logger.info("startup: stopped orphan voice bot %s", row.bot_id)
+                except Exception:
+                    logger.warning("startup: failed to stop voice bot %s", row.bot_id, exc_info=True)
+        except Exception:
+            logger.warning("startup voice bot reconciliation failed", exc_info=True)
+
+    asyncio.create_task(_reconcile_voice_bots())
     # Resolve the client lazily: admin hot reload replaces app.state.tsmusic.
     # Capturing the object here would leave the idle manager using a closed client.
     async def web_user_bot_ids() -> set[str]:
