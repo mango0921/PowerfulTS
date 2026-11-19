@@ -27,6 +27,7 @@ const music = useMusicStore()
       <span>{{ music.enqueueProgress.running ? '正在加入队列' : '队列处理' }} {{ music.enqueueProgress.processed }}/{{ music.enqueueProgress.total }} · 已添加 {{ music.enqueueProgress.enqueued }} 首<span v-if="music.enqueueProgress.failed"> · {{ music.enqueueProgress.failed }} 首失败</span></span>
       <span v-if="music.enqueueProgress.error">{{ music.enqueueProgress.error }}</span>
     </div>
+    <ChannelBotBar />
     <div class="music-grid">
       <div class="music-main">
         <LiveAudioShare />
@@ -35,7 +36,6 @@ const music = useMusicStore()
       </div>
 
       <div class="music-side">
-        <ChannelBotBar />
         <MusicPlayer />
         <PlatformAccounts />
       </div>
@@ -99,6 +99,10 @@ const music = useMusicStore()
   .music-view { gap: 14px; height: auto; overflow: visible; }
   .music-grid { gap: 14px; overflow-x: clip; }
   .music-main { gap: 14px; }
+  /* 手机上先看到「点歌」，共享音频和我的音乐往后排 */
+  .music-main > :nth-child(1) { order: 2; }
+  .music-main > :nth-child(2) { order: 1; }
+  .music-main > :nth-child(3) { order: 3; }
   .page-title {
     font-size: clamp(1.1em, 4vw, 1.4em);
   }

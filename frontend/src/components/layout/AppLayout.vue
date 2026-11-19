@@ -171,6 +171,11 @@ const pageTitle = computed(() => PAGE_TITLES[String(route.name)] ?? 'PowerfulTS'
     display: none;
   }
 
+  /* 底部固定导航会遮住最后一屏内容，留出安全距离 */
+  .layout-content {
+    padding: 16px 14px calc(88px + env(safe-area-inset-bottom));
+  }
+
   .layout-header {
     height: calc(52px + env(safe-area-inset-top));
     padding: env(safe-area-inset-top) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left));

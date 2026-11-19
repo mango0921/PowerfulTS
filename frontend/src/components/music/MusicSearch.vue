@@ -39,7 +39,11 @@ const platformColors: Record<string, string> = {
 async function handleSearch() {
   if (!keyword.value.trim()) return
   if (!music.activeBotId) {
-    ElMessage.warning('请先在「TS Bot」面板创建一个 Bot，再进行搜索（搜索需要连接到 TSMusicBot）')
+    ElMessage.warning(
+      music.channelRequired
+        ? '请先在「网页通话」加入频道，再由管理员把音乐机器人派遣到该频道'
+        : '当前频道还没有音乐机器人，请联系管理员在 MusicBot 后台派遣',
+    )
     return
   }
   // 新搜索：重置封面失败标记，让本轮结果封面重新尝试加载
